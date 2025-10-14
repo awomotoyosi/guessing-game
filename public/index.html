@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guessing Game Client</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body { font-family: sans-serif; background-color: #f0f4f8; }
+        .card { background-color: white; border-radius: 0.5rem; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 1rem; }
+        #chat-log { height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 0.5rem; }
+    </style>
+</head>
+<body class="p-4">
+    <div class="max-w-xl mx-auto space-y-4">
+        <h1 class="text-3xl font-bold text-center text-indigo-700">Client Interface (Node.js)</h1>
+        <p id="socket-status" class="text-center text-sm font-medium text-gray-500">Connecting...</p>
+
+        <!-- Player Setup -->
+        <div id="player-setup" class="card space-y-3">
+            <label class="block">Your Player Name:</label>
+            <input type="text" id="player-name-input" class="w-full p-2 border rounded" value="Player1">
+            <button onclick="joinGameClient()" class="w-full p-2 bg-indigo-500 text-white rounded hover:bg-indigo-600">Join Session</button>
+        </div>
+
+        <!-- Game Info and Controls -->
+        <div id="game-interface" class="hidden space-y-4">
+            <div id="game-status-display" class="card text-center text-lg font-bold">LOBBY</div>
+            <div id="game-question-display" class="card text-center text-xl font-semibold text-gray-800"></div>
+            <div id="timer-display" class="text-center text-red-600 font-bold hidden">Time Left: <span id="time-left">60</span>s</div>
+
+            <!-- Guess Input -->
+            <div id="guess-input-container" class="flex space-x-2 hidden">
+                <input type="text" id="guess-input" placeholder="Your guess..." class="flex-grow p-2 border rounded">
+                <button onclick="submitGuessClient()" class="p-2 bg-blue-500 text-white rounded hover:bg-blue-600">Guess</button>
+            </div>
+            
+            <!-- GM Controls Placeholder (Actual GM actions use REST API calls) -->
+            <div id="gm-actions-placeholder" class="hidden card p-3 space-y-2">
+                <h3 class="font-bold">GM Actions (API Calls)</h3>
+                <input type="text" id="gm-question" placeholder="Question" class="w-full p-2 border rounded">
+                <input type="text" id="gm-answer" placeholder="Answer" class="w-full p-2 border rounded">
+                <button onclick="setQuestionClient()" class="p-2 bg-green-500 text-white rounded hover:bg-green-600">Set Question</button>
+                <button onclick="startGameClient()" class="p-2 bg-red-500 text-white rounded hover:bg-red-600">Start Game</button>
+            </div>
+
+            <!-- Scoreboard -->
+            <div class="card">
+                <h3 class="font-bold border-b pb-1">Scores</h3>
+                <ul id="scoreboard" class="list-disc pl-5"></ul>
+            </div>
+
+            <!-- Chat Log -->
+            <div class="card">
+                <h3 class="font-bold border-b pb-1">Game Events (Real-time)</h3>
+                <div id="chat-log"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        let socket;
+        let userId = 'user_mock_123'; // Must match the mockAuth middleware
+        let currentSessionId = 'main_session';
+        let playerName = document.getElementById('player-name-input').value;
+
+        // Initialize Socket.IO connection
+        function initializeSocket() {
+            // Assumes server is running on the same host/port
+            socket = io(); 
+
+            socket.on('connect', () => {
+                document.getElementById('socket-status').textContent = `Connected as Socket ID: ${socket.id}`;
+            });
+
+            socket.on('disconnect', () => {
+                document.getElementById('socket-status').textContent = 'Disconnected.';
+            });
+
+            // Real-time state update listener
+            socket.on('game:update', (session) => {
+                renderGame(session);
+            });
+            
+            // Real-time timeout listener
+            socket.on('game:timeout', (answer) => {
+                logEvent(`Game ended! The answer was: ${answer}`);
+            });
+            
+            // Real-time error listener
+            socket.on('error:guess', (message) => {
+                logEvent(`Error: ${message}`);
+            });
+        }
+
+        // --- Client Actions (Mimicking API calls) ---
+
+        // 1. Join Game (Uses REST POST to update initial state)
+        async function joinGameClient() {
+            playerName = document.getElementById('player-name-input').value;
+            userId = Math.random().toString(36).substring(2, 9); // Generate a unique ID for client side mocking
+
+            try {
+                const response = await fetch(`/api/v1/game/sessions/${currentSessionId}/join`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-User-Id': userId // Pass mock ID for server-side auth
+                    },
+                    body: JSON.stringify({ playerName: playerName })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    document.getElementById('player-setup').classList.add('hidden');
+                    document.getElementById('game-interface').classList.remove('hidden');
+                    
+                    // The socket should be initialized after the player ID is stable
+                    if (!socket) initializeSocket();
+                    
+                    logEvent(data.message);
+                } else {
+                    alert(data.error);
+                }
+            } catch (error) {
+                console.error('Join failed:', error);
+            }
+        }
+
+        // 2. Set Question (GM action, uses REST POST)
+        async function setQuestionClient() {
+            const question = document.getElementById('gm-question').value;
+            const answer = document.getElementById('gm-answer').value;
+
+            try {
+                const response = await fetch(`/api/v1/game/sessions/${currentSessionId}/question`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-User-Id': userId },
+                    body: JSON.stringify({ question, answer })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    logEvent(data.message);
+                } else {
+                    alert(data.error);
+                }
+            } catch (error) {
+                console.error('Set Question failed:', error);
+            }
+        }
+
+        // 3. Start Game (GM action, uses REST POST)
+        async function startGameClient() {
+            try {
+                const response = await fetch(`/api/v1/game/sessions/${currentSessionId}/start`, {
+                    method: 'POST',
+                    headers: { 'X-User-Id': userId }
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    logEvent(data.message);
+                } else {
+                    alert(data.error);
+                }
+            } catch (error) {
+                console.error('Start Game failed:', error);
+            }
+        }
+
+        // 4. Submit Guess (Player action, uses Socket.IO for real-time)
+        function submitGuessClient() {
+            const guess = document.getElementById('guess-input').value;
+            if (!guess) return;
+
+            socket.emit('game:guess', { 
+                sessionId: currentSessionId, 
+                guess: guess,
+                playerName: playerName // Send name for server log
+            });
+            document.getElementById('guess-input').value = '';
+        }
+
+        // --- UI Rendering ---
+
+        function renderGame(session) {
+            const isGM = session.gameMasterId === userId;
+            const isPlaying = session.players[userId];
+            
+            document.getElementById('game-status-display').textContent = session.status;
+            document.getElementById('game-question-display').textContent = session.question;
+            document.getElementById('gm-actions-placeholder').classList.toggle('hidden', !isGM);
+            document.getElementById('guess-input-container').classList.toggle('hidden', session.status !== 'IN_PROGRESS' || isGM);
+            
+            // Scoreboard
+            const scoreboard = document.getElementById('scoreboard');
+            scoreboard.innerHTML = '';
+            const playerArray = Object.values(session.players || {}).sort((a, b) => b.score - a.score);
+            
+            playerArray.forEach(p => {
+                const li = document.createElement('li');
+                li.textContent = `${p.name} (ID: ${p.id.substring(0,4)}...) - Score: ${p.score} ${p.id === session.gameMasterId ? '(GM)' : ''}`;
+                scoreboard.appendChild(li);
+            });
+
+            // Chat Log
+            document.getElementById('chat-log').innerHTML = '';
+            (session.chatLog || []).forEach(msg => {
+                if (msg.type === 'guess') {
+                    logEvent(`[${msg.playerName}]: ${msg.message}`);
+                } else {
+                    logEvent(`[SYSTEM]: ${msg.message}`);
+                }
+            });
+
+            // Timer (Very basic client-side timer visualization)
+            const timerEl = document.getElementById('timer-display');
+            if (session.status === 'IN_PROGRESS' && session.timeoutTime) {
+                timerEl.classList.remove('hidden');
+                // For a proper implementation, the timer needs to be kept in sync with the server.
+                const timeLeft = Math.max(0, Math.floor((session.timeoutTime - Date.now()) / 1000));
+                document.getElementById('time-left').textContent = timeLeft;
+            } else {
+                timerEl.classList.add('hidden');
+            }
+        }
+
+        function logEvent(message) {
+            const log = document.getElementById('chat-log');
+            const p = document.createElement('p');
+            p.className = 'text-sm';
+            p.textContent = message;
+            log.appendChild(p);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Initialize the client setup area
+        window.onload = () => {
+             document.getElementById('player-name-input').value = 'P-' + Math.floor(Math.random() * 1000);
+        };
+    </script>
+</body>
+</html>
